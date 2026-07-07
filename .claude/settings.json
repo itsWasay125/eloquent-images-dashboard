@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find \"d:/React Dashboard\" -name \"vite.config.*\" -not -path \"*/node_modules/*\" 2>/dev/null)",
+      "Read(//d/React Dashboard/**)",
+      "Read(//d//**)",
+      "Bash(grep -E \"\\\\.\\(jsx|js\\)$\")"
+    ],
+    "additionalDirectories": [
+      "d:\\eloquent-images\\src\\pages",
+      "d:\\eloquent-images\\public"
+    ]
+  }
+}

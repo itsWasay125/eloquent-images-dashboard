@@ -22,6 +22,23 @@ const swalOptions = {
   customClass: { popup: "eloquent-swal-popup" },
 };
 
+async function mapWithConcurrency(items, limit, mapper) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await mapper(items[index], index);
+    }
+  }
+
+  const workerCount = Math.max(1, Math.min(limit, items.length));
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  return results;
+}
+
 const EloquentGalleryCreatePage = () => {
   const navigate = useNavigate();
   const [categories, setCategories] = useState([]);
@@ -88,15 +105,18 @@ const EloquentGalleryCreatePage = () => {
     setUploadProgress({ done: 0, total });
     setSubmitting(true);
     try {
-      let done = 0;
-      for (const file of upload.files) {
-        setUploadStep("Applying watermark...");
-        const watermarkedFile = await addGalleryWatermark(file);
-        setUploadStep("Uploading...");
-        await uploadImages({ categoryIds: upload.categoryIds, files: [watermarkedFile] }, token);
-        done += 1;
-        setUploadProgress({ done, total });
-      }
+      setUploadStep("Applying watermarks...");
+      const watermarkedFiles = await mapWithConcurrency(upload.files, 3, addGalleryWatermark);
+      setUploadProgress({ done: 0, total });
+      setUploadStep("Uploading...");
+      await uploadImages(
+        {
+          categoryIds: upload.categoryIds,
+          files: watermarkedFiles,
+          onProgress: (done, totalCount) => setUploadProgress({ done, total: totalCount }),
+        },
+        token
+      );
       setUpload(emptyUpload);
       formElement.reset();
       await Swal.fire({

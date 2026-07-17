@@ -14,6 +14,7 @@ import {
 } from "../api/eloquentApi";
 import EloquentImage from "../components/EloquentImage";
 import MasterLayout from "../otherImages/MasterLayout";
+import "./EloquentGalleryPage.css";
 
 const swalOptions = {
   background: "#101722",
@@ -21,6 +22,8 @@ const swalOptions = {
   confirmButtonColor: "#3b586e",
   customClass: { popup: "eloquent-swal-popup" },
 };
+
+const GALLERY_PAGE_SIZE = 15;
 
 function getImageName(image) {
   const name = image.originalName || image.fileName || image.filename || image.title;
@@ -54,7 +57,12 @@ function limitMetaTotal(meta = {}, maxTotalItems) {
 }
 
 function isMarkedNew(image) {
-  return image.isNew === true || image.is_new === true;
+  return (
+    image.isNew === true ||
+    image.is_new === true ||
+    String(image.isNew).toLowerCase() === "true" ||
+    String(image.is_new).toLowerCase() === "true"
+  );
 }
 
 function applyWhatsNewState(images, whatsNewIds) {
@@ -93,7 +101,7 @@ const EloquentGalleryPage = () => {
     setLoadingImages(true);
     try {
       const [data, whatsNewImages] = await Promise.all([
-        fetchGalleryImages({ categoryId, page: pageNumber }),
+        fetchGalleryImages({ categoryId, page: pageNumber, limit: GALLERY_PAGE_SIZE }),
         fetchWhatsNewGalleryImages(),
       ]);
       const nextWhatsNewIds = new Set(whatsNewImages.map((image) => String(image.id)));
@@ -357,7 +365,10 @@ const EloquentGalleryPage = () => {
           </div>
         ) : (
           <div className="eloquent-gallery-grid">
-            {images.map((image) => (
+            {images.map((image) => {
+              const isNew = isMarkedNew(image);
+
+              return (
               <article className="eloquent-gallery-card" key={image.id}>
                 <div className="eloquent-gallery-media">
                   <EloquentImage
@@ -465,35 +476,6 @@ const EloquentGalleryPage = () => {
                         ? image.categories.map((cat) => cat.name).join(", ")
                         : "Uncategorized"}
                     </small>
-                    
-                    {/* What's New Toggle */}
-                    <button
-                      type="button"
-                      onClick={() => handleToggleIsNew(image)}
-                      style={{
-                        marginTop: '12px',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        width: '100%',
-                        gap: '8px',
-                        background: (image.isNew || image.is_new) ? 'rgba(59, 130, 246, 0.1)' : 'rgba(255, 255, 255, 0.05)',
-                        border: `1px solid ${(image.isNew || image.is_new) ? '#3b82f6' : 'rgba(255,255,255,0.1)'}`,
-                        borderRadius: '6px',
-                        padding: '6px 10px',
-                        color: (image.isNew || image.is_new) ? '#3b82f6' : '#94a3b8',
-                        fontSize: '13px',
-                        fontWeight: '500',
-                        cursor: 'pointer',
-                        transition: 'all 0.2s ease',
-                      }}
-                    >
-                      <Icon 
-                        icon={(image.isNew || image.is_new) ? "solar:check-circle-bold" : "solar:check-circle-linear"} 
-                        width="16" 
-                      />
-                      {(image.isNew || image.is_new) ? "Added to What's New" : "Show in What's New"}
-                    </button>
                   </div>
                   {editingTitleId !== image.id && (
                     <div className="eloquent-gallery-card-actions">
@@ -533,10 +515,22 @@ const EloquentGalleryPage = () => {
                       </button>
                     </div>
                   )}
+                  <button
+                    className={`eloquent-whats-new-toggle${isNew ? " is-active" : ""}`}
+                    type="button"
+                    onClick={() => handleToggleIsNew(image)}
+                  >
+                    <Icon
+                      icon={isNew ? "solar:check-circle-bold" : "solar:check-circle-linear"}
+                      width="16"
+                    />
+                    <span>{isNew ? "Added to What's New" : "Show in What's New"}</span>
+                  </button>
                 </div>
                 )}
               </article>
-            ))}
+              );
+            })}
           </div>
         )}
 

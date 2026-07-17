@@ -128,7 +128,7 @@ const EloquentPrintfulOrdersPage = () => {
         </div>
       )}
 
-      <section className="eloquent-panel eloquent-contact-panel mt-4">
+      <section className="eloquent-panel eloquent-contact-panel eloquent-printful-orders-panel mt-4">
         <div className="eloquent-contact-toolbar">
           <div>
             <h3>Customer Orders</h3>
@@ -165,8 +165,8 @@ const EloquentPrintfulOrdersPage = () => {
             </span>
           </div>
         ) : (
-          <div className="eloquent-contact-table-wrap">
-            <table className="eloquent-contact-table">
+          <div className="eloquent-contact-table-wrap eloquent-printful-orders-wrap">
+            <table className="eloquent-contact-table eloquent-printful-orders-table">
               <thead>
                 <tr>
                   <th>Customer</th>

@@ -55,6 +55,79 @@ function authHeaders(token) {
   return authToken ? { Authorization: `Bearer ${authToken}` } : {};
 }
 
+function getImageTitleFromFile(file) {
+  return file.name.replace(/\.[^/.]+$/, "");
+}
+
+function getImageDisplayName(image = {}) {
+  return (
+    image.originalName ||
+    image.fileName ||
+    image.filename ||
+    image.title ||
+    ""
+  ).replace(/\.[^/.]+$/, "");
+}
+
+function getIdValue(value) {
+  const id = Number(value);
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+function collectUploadedImageIds(payload, fileTitle, ids = new Set()) {
+  if (!payload || typeof payload !== "object") return ids;
+
+  if (Array.isArray(payload)) {
+    payload.forEach((item) => collectUploadedImageIds(item, fileTitle, ids));
+    return ids;
+  }
+
+  const id = getIdValue(payload.id || payload.imageId || payload.image_id);
+  const looksLikeImage =
+    payload.imageUrl ||
+    payload.url ||
+    payload.path ||
+    payload.originalName ||
+    payload.fileName ||
+    payload.filename ||
+    payload.title === fileTitle ||
+    getImageDisplayName(payload) === fileTitle;
+
+  if (id && looksLikeImage) {
+    ids.add(id);
+  }
+
+  Object.values(payload).forEach((value) => {
+    if (value && typeof value === "object") {
+      collectUploadedImageIds(value, fileTitle, ids);
+    }
+  });
+
+  return ids;
+}
+
+async function clearWhatsNewForImages(imageIds, token) {
+  const ids = Array.isArray(imageIds) ? imageIds : Array.from(imageIds || []);
+  const uniqueIds = [...new Set(ids.map(getIdValue).filter(Boolean))];
+  if (!uniqueIds.length) return;
+
+  await Promise.all(
+    uniqueIds.map((id) => updateGalleryImageIsNew(id, false, token).catch(() => null))
+  );
+}
+
+async function clearUploadedFilesFromWhatsNew(files, token) {
+  const uploadedTitles = new Set(files.map(getImageTitleFromFile));
+  if (!uploadedTitles.size) return;
+
+  const whatsNewImages = await fetchWhatsNewGalleryImages().catch(() => []);
+  const imageIds = whatsNewImages
+    .filter((image) => uploadedTitles.has(getImageDisplayName(image)))
+    .map((image) => image.id);
+
+  await clearWhatsNewForImages(imageIds, token);
+}
+
 export function getAuthSession() {
   try {
     const session = localStorage.getItem(AUTH_KEY);
@@ -248,9 +321,10 @@ export async function deleteCategory(id, token) {
 
 // ── Gallery Images ────────────────────────────────────────
 
-export async function fetchGalleryImages({ categoryId, page = 1 } = {}) {
+export async function fetchGalleryImages({ categoryId, page = 1, limit = 15 } = {}) {
   const params = new URLSearchParams({
     page: String(page),
+    limit: String(limit),
     _: String(Date.now()),
   });
   if (categoryId) params.set("categoryId", categoryId);
@@ -281,11 +355,15 @@ export async function fetchWhatsNewGalleryImages({ limit = 1000 } = {}) {
 
 export async function uploadImage({ categoryIds, file }, token) {
   const formData = new FormData();
-  const fileTitle = file.name.replace(/\.[^/.]+$/, "");
+  const fileTitle = getImageTitleFromFile(file);
   formData.append("image", file);
   formData.append("title", fileTitle);
   formData.append("is_new", "false");
   formData.append("isNew", "false");
+  formData.append("isNewImage", "false");
+  formData.append("is_new_image", "false");
+  formData.append("show_in_whats_new", "false");
+  formData.append("showInWhatsNew", "false");
   if (categoryIds?.length) {
     categoryIds.forEach((id) => formData.append("categoryIds[]", Number(id)));
   }
@@ -295,25 +373,30 @@ export async function uploadImage({ categoryIds, file }, token) {
     body: formData,
   });
   const result = await parseResponse(response);
-  const uploadedImageId =
-    result?.data?.id ||
-    result?.image?.id ||
-    result?.id ||
-    result?.data?.image?.id;
-
-  if (uploadedImageId) {
-    await updateGalleryImageIsNew(uploadedImageId, false, token).catch(() => null);
-  }
+  await clearWhatsNewForImages(collectUploadedImageIds(result, fileTitle), token);
 
   return result;
 }
 
-export async function uploadImages({ categoryIds, files }, token) {
-  const results = [];
-  for (const file of files) {
-    const result = await uploadImage({ categoryIds, file }, token);
-    results.push(result);
+export async function uploadImages({ categoryIds, files, onProgress, concurrency = 3 }, token) {
+  const results = new Array(files.length);
+  let nextIndex = 0;
+  let done = 0;
+
+  async function worker() {
+    while (nextIndex < files.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await uploadImage({ categoryIds, file: files[index] }, token);
+      done += 1;
+      onProgress?.(done, files.length);
+    }
   }
+
+  const workerCount = Math.max(1, Math.min(concurrency, files.length));
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  await clearUploadedFilesFromWhatsNew(files, token);
+
   return results;
 }
 

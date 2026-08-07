@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import Swal from "sweetalert2";
 import {
   deleteImage,
+  fetchAllGalleryImages,
   fetchCategories,
   fetchGalleryImages,
   fetchWhatsNewGalleryImages,
@@ -11,10 +12,10 @@ import {
   updateGalleryImageCategories,
   updateGalleryImageTitle,
   updateGalleryImageIsNew,
+  updateGalleryImageSortOrder,
 } from "../api/eloquentApi";
 import EloquentImage from "../components/EloquentImage";
 import MasterLayout from "../otherImages/MasterLayout";
-import "./EloquentGalleryPage.css";
 
 const swalOptions = {
   background: "#101722",
@@ -24,11 +25,22 @@ const swalOptions = {
 };
 
 const GALLERY_PAGE_SIZE = 15;
+const GALLERY_LIST_PAGE_SIZE = 100;
 
 function getImageName(image) {
-  const name = image.originalName || image.fileName || image.filename || image.title;
+  const name = image.title || image.originalName || image.fileName || image.filename;
   if (name?.trim()) return name.trim();
   return "Original name unavailable";
+}
+
+function getImageCategory(image, categoryId) {
+  if (!categoryId) return null;
+  return (image.categories || []).find((cat) => String(cat.id || cat.categoryId) === String(categoryId));
+}
+
+function getCategoryById(categories, categoryId) {
+  if (!categoryId) return null;
+  return categories.find((category) => String(category.id) === String(categoryId)) || null;
 }
 
 function toFiniteNumber(value) {
@@ -72,6 +84,75 @@ function applyWhatsNewState(images, whatsNewIds) {
   });
 }
 
+function sortByImageName(images = []) {
+  return [...images].sort((first, second) =>
+    getImageName(first).localeCompare(getImageName(second), undefined, {
+      numeric: true,
+      sensitivity: "base",
+    })
+  );
+}
+
+function sortGalleryImages(images = [], categoryId = "", category = null) {
+  const hasCategorySortOrder =
+    categoryId &&
+    images.some((image) => {
+      const sortOrder = Number(getImageCategory(image, categoryId)?.sortOrder);
+      return Number.isFinite(sortOrder) && sortOrder > 0;
+    });
+
+  if (categoryId && !hasCategorySortOrder) {
+    return [...images];
+  }
+
+  return [...images].sort((first, second) => {
+    const firstOrder = Number(getImageCategory(first, categoryId)?.sortOrder);
+    const secondOrder = Number(getImageCategory(second, categoryId)?.sortOrder);
+    const hasFirstOrder = Number.isFinite(firstOrder) && firstOrder > 0;
+    const hasSecondOrder = Number.isFinite(secondOrder) && secondOrder > 0;
+
+    if (hasFirstOrder && hasSecondOrder && firstOrder !== secondOrder) {
+      return firstOrder - secondOrder;
+    }
+    if (hasFirstOrder !== hasSecondOrder) return hasFirstOrder ? -1 : 1;
+
+    return sortByImageName([first, second])[0] === first ? -1 : 1;
+  });
+}
+
+function withCategorySortOrder(image, categoryId, sortOrder) {
+  const categoryExists = (image.categories || []).some(
+    (category) => String(category.id ?? category.categoryId) === String(categoryId)
+  );
+  const categories = categoryExists
+    ? (image.categories || []).map((category) =>
+        String(category.id ?? category.categoryId) === String(categoryId)
+          ? { ...category, sortOrder }
+          : category
+      )
+    : [
+        ...(image.categories || []),
+        {
+          id: Number(categoryId),
+          categoryId: Number(categoryId),
+          sortOrder,
+        },
+      ];
+
+  return { ...image, categories };
+}
+
+function mergeImageSortOrderFromResponse(image, responseImage, categoryId) {
+  const responseCategory = (responseImage?.categories || []).find(
+    (category) => String(category.id ?? category.categoryId) === String(categoryId)
+  );
+  const responseSortOrder = Number(responseCategory?.sortOrder);
+
+  return Number.isInteger(responseSortOrder) && responseSortOrder > 0
+    ? withCategorySortOrder({ ...image, ...responseImage }, categoryId, responseSortOrder)
+    : image;
+}
+
 const EloquentGalleryPage = () => {
   const navigate = useNavigate();
   const [categories, setCategories] = useState([]);
@@ -89,6 +170,9 @@ const EloquentGalleryPage = () => {
   const [editingCategoryIds, setEditingCategoryIds] = useState([]);
   const [savingCategoriesId, setSavingCategoriesId] = useState(null);
   const [whatsNewIds, setWhatsNewIds] = useState(() => new Set());
+  const [viewMode, setViewMode] = useState("grid");
+  const [sortOrderDrafts, setSortOrderDrafts] = useState({});
+  const [savingSortOrderId, setSavingSortOrderId] = useState(null);
 
   const token = getAuthSession()?.token;
 
@@ -100,8 +184,12 @@ const EloquentGalleryPage = () => {
   const loadImages = useCallback(async (categoryId = activeCategory, pageNumber = page, options = {}) => {
     setLoadingImages(true);
     try {
+      const isListView = viewMode === "list";
+      const selectedCategory = getCategoryById(categories, categoryId);
       const [data, whatsNewImages] = await Promise.all([
-        fetchGalleryImages({ categoryId, page: pageNumber, limit: GALLERY_PAGE_SIZE }),
+        isListView
+          ? fetchAllGalleryImages({ categoryId, limit: GALLERY_LIST_PAGE_SIZE })
+          : fetchGalleryImages({ categoryId, page: pageNumber, limit: GALLERY_PAGE_SIZE }),
         fetchWhatsNewGalleryImages(),
       ]);
       const nextWhatsNewIds = new Set(whatsNewImages.map((image) => String(image.id)));
@@ -110,18 +198,29 @@ const EloquentGalleryPage = () => {
       const pageImages = options.deletedImageId
         ? data.images.filter((image) => String(image.id) !== String(options.deletedImageId))
         : data.images;
-      const nextImages = applyWhatsNewState(pageImages, nextWhatsNewIds);
+      const nextImages = applyWhatsNewState(
+        sortGalleryImages(pageImages, categoryId, selectedCategory),
+        nextWhatsNewIds
+      );
       const nextMeta =
         options.maxTotalItems === undefined
           ? data.meta
           : limitMetaTotal(data.meta, options.maxTotalItems);
       setImages(nextImages);
+      setSortOrderDrafts((current) => {
+        const next = { ...current };
+        nextImages.forEach((image, index) => {
+          const categoryOrder = getImageCategory(image, categoryId)?.sortOrder;
+          next[image.id] = String(categoryOrder || index + 1);
+        });
+        return next;
+      });
       setMeta(nextMeta);
       return { images: nextImages, meta: nextMeta };
     } finally {
       setLoadingImages(false);
     }
-  }, [activeCategory, page]);
+  }, [activeCategory, categories, page, viewMode]);
 
   useEffect(() => {
     loadCategories().catch((err) => setError(err.message));
@@ -133,6 +232,11 @@ const EloquentGalleryPage = () => {
 
   const selectCategory = (categoryId) => {
     setActiveCategory(categoryId);
+    setPage(1);
+  };
+
+  const selectViewMode = (mode) => {
+    setViewMode(mode);
     setPage(1);
   };
 
@@ -290,6 +394,146 @@ const EloquentGalleryPage = () => {
     }
   };
 
+  const handleSortOrderChange = (imageId, value) => {
+    setSortOrderDrafts((current) => ({ ...current, [imageId]: value }));
+  };
+
+  const handleSaveSortOrder = async (image) => {
+    if (!activeCategory) {
+      await Swal.fire({
+        ...swalOptions,
+        icon: "info",
+        title: "Select a category",
+        text: "Choose a specific category before saving image order.",
+      });
+      return;
+    }
+
+    const sortOrder = Number(sortOrderDrafts[image.id]);
+    if (!Number.isInteger(sortOrder) || sortOrder <= 0) {
+      await Swal.fire({
+        ...swalOptions,
+        icon: "info",
+        title: "Invalid order",
+        text: "Enter a positive whole number for the image order.",
+      });
+      return;
+    }
+
+    setSavingSortOrderId(image.id);
+    try {
+      const currentImages = sortGalleryImages(
+        images,
+        activeCategory,
+        getCategoryById(categories, activeCategory)
+      );
+      const currentIndex = currentImages.findIndex((item) => String(item.id) === String(image.id));
+
+      if (currentIndex === -1) {
+        throw new Error("Image is not available in the current category list.");
+      }
+
+      const targetIndex = Math.min(Math.max(sortOrder - 1, 0), currentImages.length - 1);
+      const reorderedImages = [...currentImages];
+      const [movedImage] = reorderedImages.splice(currentIndex, 1);
+      reorderedImages.splice(targetIndex, 0, movedImage);
+
+      const reorderedImagesWithOrder = reorderedImages.map((item, index) =>
+        withCategorySortOrder(item, activeCategory, index + 1)
+      );
+
+      setImages(reorderedImagesWithOrder);
+      setSortOrderDrafts((current) => {
+        const next = { ...current };
+        reorderedImagesWithOrder.forEach((item, index) => {
+          next[item.id] = String(index + 1);
+        });
+        return next;
+      });
+
+      const savedImageById = new Map();
+      for (let index = reorderedImagesWithOrder.length - 1; index >= 0; index -= 1) {
+        const item = reorderedImagesWithOrder[index];
+        const result = await updateGalleryImageSortOrder(
+          item.id,
+          {
+            title: getImageName(item),
+            categories: [{ categoryId: activeCategory, sortOrder: index + 1 }],
+          },
+          token
+        );
+        if (result?.data) {
+          savedImageById.set(String(item.id), result.data);
+        }
+      }
+
+      const savedReorderedImages = reorderedImagesWithOrder.map((item, index) => {
+        const responseImage = savedImageById.get(String(item.id));
+        const itemWithRequestedOrder = withCategorySortOrder(item, activeCategory, index + 1);
+        return responseImage
+          ? mergeImageSortOrderFromResponse(itemWithRequestedOrder, responseImage, activeCategory)
+          : itemWithRequestedOrder;
+      });
+
+      setImages((current) => {
+        const orderById = new Map(
+          savedReorderedImages.map((item, index) => [String(item.id), index + 1])
+        );
+        const updatedImages = current.map((item) => {
+          const nextOrder = orderById.get(String(item.id));
+          return nextOrder ? withCategorySortOrder(item, activeCategory, nextOrder) : item;
+        });
+
+        return sortGalleryImages(
+          updatedImages,
+          activeCategory,
+          getCategoryById(categories, activeCategory)
+        );
+      });
+      await Swal.fire({
+        ...swalOptions,
+        icon: "success",
+        title: "Order saved",
+        text: "The image order has been updated.",
+      });
+    } catch (err) {
+      await Swal.fire({
+        ...swalOptions,
+        icon: "error",
+        title: "Could not save order",
+        text: err.message || "Please try again.",
+      });
+    } finally {
+      setSavingSortOrderId(null);
+    }
+  };
+
+  const renderSortOrderControl = (image, className = "") => (
+    <div className={`eloquent-sort-order-control ${className}`.trim()}>
+      <span>Order</span>
+      <input
+        aria-label={`Sort order for ${getImageName(image)}`}
+        disabled={!activeCategory || savingSortOrderId === image.id}
+        min="1"
+        onChange={(event) => handleSortOrderChange(image.id, event.target.value)}
+        type="number"
+        value={sortOrderDrafts[image.id] || ""}
+      />
+      <button
+        disabled={!activeCategory || savingSortOrderId === image.id}
+        onClick={() => handleSaveSortOrder(image)}
+        title={activeCategory ? "Save order" : "Select a category first"}
+        type="button"
+      >
+        <Icon
+          className={savingSortOrderId === image.id ? "eloquent-contact-spinner" : ""}
+          icon={savingSortOrderId === image.id ? "solar:refresh-linear" : "solar:diskette-linear"}
+          width="15"
+        />
+      </button>
+    </div>
+  );
+
   return (
     <MasterLayout>
       <div className="eloquent-contact-heading">
@@ -352,6 +596,35 @@ const EloquentGalleryPage = () => {
           </div>
         </div>
 
+        <div className="eloquent-gallery-view-row">
+          <div>
+            <strong>{viewMode === "list" ? "Complete list" : "Grid view"}</strong>
+            <span>
+              {viewMode === "list"
+                ? "Showing the full selected collection without paging."
+                : "Showing 15 images per page."}
+            </span>
+          </div>
+          <div className="eloquent-gallery-view-toggle">
+            <button
+              className={viewMode === "grid" ? "active" : ""}
+              onClick={() => selectViewMode("grid")}
+              type="button"
+            >
+              <Icon icon="solar:widget-4-linear" width="17" />
+              Grid
+            </button>
+            <button
+              className={viewMode === "list" ? "active" : ""}
+              onClick={() => selectViewMode("list")}
+              type="button"
+            >
+              <Icon icon="solar:list-linear" width="17" />
+              List / Show All
+            </button>
+          </div>
+        </div>
+
         {loadingImages ? (
           <div className="eloquent-gallery-state">
             <Icon className="eloquent-contact-spinner" icon="solar:refresh-linear" width="28" />
@@ -362,6 +635,131 @@ const EloquentGalleryPage = () => {
             <Icon icon="solar:gallery-remove-linear" width="32" />
             <strong>No images in this category</strong>
             <span>Upload an image or choose another category.</span>
+          </div>
+        ) : viewMode === "list" ? (
+          <div className="eloquent-gallery-list-wrap">
+            <table className="eloquent-gallery-list">
+              <thead>
+                <tr>
+                  <th>Image</th>
+                  <th>Order</th>
+                  <th>Title</th>
+                  <th>Categories</th>
+                  <th>What's New</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {images.map((image) => {
+                  const isNew = isMarkedNew(image);
+                  return (
+                    <tr key={image.id}>
+                      <td>
+                        <div className="eloquent-gallery-list-thumb">
+                          <EloquentImage alt={getImageName(image)} src={image.imageUrl} />
+                        </div>
+                      </td>
+                      <td>
+                        {renderSortOrderControl(image)}
+                      </td>
+                      <td>
+                        {editingTitleId === image.id ? (
+                          <div className="eloquent-gallery-title-edit">
+                            <input
+                              autoFocus
+                              className="eloquent-gallery-title-input"
+                              disabled={savingTitleId === image.id}
+                              onChange={(e) => setEditingTitle(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") handleSaveTitle(image.id);
+                                if (e.key === "Escape") setEditingTitleId(null);
+                              }}
+                              value={editingTitle}
+                            />
+                            <button
+                              className="eloquent-gallery-title-save"
+                              disabled={savingTitleId === image.id || !editingTitle.trim()}
+                              onClick={() => handleSaveTitle(image.id)}
+                              title="Save"
+                              type="button"
+                            >
+                              <Icon
+                                className={savingTitleId === image.id ? "eloquent-contact-spinner" : ""}
+                                icon={savingTitleId === image.id ? "solar:refresh-linear" : "solar:check-read-linear"}
+                                width="15"
+                              />
+                            </button>
+                            <button
+                              className="eloquent-gallery-title-cancel"
+                              disabled={savingTitleId === image.id}
+                              onClick={() => setEditingTitleId(null)}
+                              title="Cancel"
+                              type="button"
+                            >
+                              <Icon icon="solar:close-circle-linear" width="15" />
+                            </button>
+                          </div>
+                        ) : (
+                          <strong title={getImageName(image)}>{getImageName(image)}</strong>
+                        )}
+                      </td>
+                      <td>
+                        <span>
+                          {image.categories?.length
+                            ? image.categories.map((cat) => cat.name).join(", ")
+                            : "Uncategorized"}
+                        </span>
+                      </td>
+                      <td>
+                        <button
+                          className={`eloquent-whats-new-toggle eloquent-whats-new-toggle-table${
+                            isNew ? " is-active" : ""
+                          }`}
+                          type="button"
+                          onClick={() => handleToggleIsNew(image)}
+                        >
+                          <Icon
+                            icon={isNew ? "solar:check-circle-bold" : "solar:check-circle-linear"}
+                            width="16"
+                          />
+                          <span>{isNew ? "Added" : "Show"}</span>
+                        </button>
+                      </td>
+                      <td>
+                        <div className="eloquent-gallery-list-actions">
+                          <button
+                            className="eloquent-gallery-title-btn"
+                            onClick={() => startEditTitle(image)}
+                            title="Edit title"
+                            type="button"
+                          >
+                            <Icon icon="solar:pen-linear" width="15" />
+                          </button>
+                          <button
+                            className="eloquent-gallery-delete-btn"
+                            aria-label={`Delete ${getImageName(image)}`}
+                            disabled={deletingId === image.id}
+                            onClick={() => handleDelete(image.id)}
+                            title="Delete image"
+                            type="button"
+                          >
+                            <Icon
+                              className={deletingId === image.id ? "eloquent-contact-spinner" : ""}
+                              icon={
+                                deletingId === image.id
+                                  ? "solar:refresh-linear"
+                                  : "solar:trash-bin-trash-linear"
+                              }
+                              width="18"
+                            />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         ) : (
           <div className="eloquent-gallery-grid">
@@ -526,6 +924,7 @@ const EloquentGalleryPage = () => {
                     />
                     <span>{isNew ? "Added to What's New" : "Show in What's New"}</span>
                   </button>
+                  {renderSortOrderControl(image, "eloquent-sort-order-control-card")}
                 </div>
                 )}
               </article>
@@ -534,7 +933,7 @@ const EloquentGalleryPage = () => {
           </div>
         )}
 
-        {!loadingImages && images.length > 0 && (
+        {!loadingImages && images.length > 0 && viewMode === "grid" && (
           <div className="eloquent-contact-pagination eloquent-gallery-pagination">
             <span>
               Page {meta.currentPage ?? page} of {meta.totalPages ?? 1}

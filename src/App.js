@@ -20,7 +20,7 @@ function App() {
       <RouteScrollToTop />
       <Routes>
         <Route path="/" element={<SignInPage />} />
-        <Route path="/dashboard" element={<Navigate replace to="/blogs" />} />
+        <Route path="/dashboard" element={<Navigate replace to="/gallery" />} />
         <Route
           path="/blogs"
           element={<ProtectedRoute element={EloquentBlogsPage} />}

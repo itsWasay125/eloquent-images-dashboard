@@ -5,6 +5,7 @@ import { Icon } from "@iconify/react/dist/iconify.js";
 import { consumeSessionExpiredFlag, getAuthSession, loginUser } from "../api/eloquentApi";
 
 const signInVisual = "/assets/images/auth/eloquent-sign-in-visual.png";
+const DEFAULT_DASHBOARD_PATH = "/gallery";
 
 const SignInLayer = () => {
   const navigate = useNavigate();
@@ -19,7 +20,7 @@ const SignInLayer = () => {
   }, []);
 
   if (getAuthSession()?.token) {
-    return <Navigate replace to="/blogs" />;
+    return <Navigate replace to={DEFAULT_DASHBOARD_PATH} />;
   }
 
   const handleLogin = async (values, helpers) => {
@@ -28,7 +29,7 @@ const SignInLayer = () => {
 
     try {
       await loginUser(values);
-      navigate("/blogs");
+      navigate(DEFAULT_DASHBOARD_PATH);
     } catch (err) {
       setError(err.message || "Invalid email or password");
     } finally {

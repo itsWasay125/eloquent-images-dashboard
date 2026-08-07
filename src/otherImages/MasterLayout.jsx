@@ -77,7 +77,7 @@ const MasterLayout = ({ children }) => {
           <Icon icon='radix-icons:cross-2' />
         </button>
         <div>
-          <Link to='/blogs' className='sidebar-logo eloquent-sidebar-logo'>
+          <Link to='/gallery' className='sidebar-logo eloquent-sidebar-logo'>
             <img src={webLogo} alt='site logo' className='light-logo' />
             <img src={webLogo} alt='site logo' className='dark-logo' />
             <img

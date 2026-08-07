@@ -1,4 +1,4 @@
-const API_BASE = "https://eloquent.koderspedia.online";
+const API_BASE = "https://api.eloquent-image.com";
 const AUTH_KEY = "eloquent_dashboard_auth";
 const EXPIRED_FLAG_KEY = "eloquent_session_expired";
 const SESSION_DURATION_MS = 60 * 60 * 1000; // 1 hour
@@ -15,8 +15,6 @@ function forceSignOut() {
 async function parseResponse(response) {
   const data = await response.json().catch(() => ({}));
 
-  // An expired/invalid token returns 401 — only force a sign-out if we actually
-  // had a session (so a wrong-password 401 on the login page is left alone).
   if (response.status === 401 && getAuthToken()) {
     forceSignOut();
     throw new Error(data.message || "Your session has expired. Please sign in again.");
@@ -321,10 +319,18 @@ export async function deleteCategory(id, token) {
 
 // ── Gallery Images ────────────────────────────────────────
 
-export async function fetchGalleryImages({ categoryId, page = 1, limit = 15 } = {}) {
+export async function fetchGalleryImages({
+  categoryId,
+  page = 1,
+  limit = 15,
+  sortBy,
+  order = "asc",
+} = {}) {
   const params = new URLSearchParams({
     page: String(page),
     limit: String(limit),
+    sortBy: sortBy || (categoryId ? "sortOrder" : "title"),
+    order,
     _: String(Date.now()),
   });
   if (categoryId) params.set("categoryId", categoryId);
@@ -336,6 +342,51 @@ export async function fetchGalleryImages({ categoryId, page = 1, limit = 15 } = 
   return {
     images: Array.isArray(data.data) ? data.data : [],
     meta: data.meta || {},
+  };
+}
+
+export async function fetchAllGalleryImages({ categoryId, limit = 100, sortBy } = {}) {
+  const first = await fetchGalleryImages({
+    categoryId,
+    page: 1,
+    limit,
+    sortBy,
+    order: "asc",
+  });
+  const totalPages = Number(first.meta?.totalPages) || 1;
+  if (totalPages <= 1) return first;
+
+  const remainingPages = await Promise.all(
+    Array.from({ length: totalPages - 1 }, (_, index) =>
+      fetchGalleryImages({
+        categoryId,
+        page: index + 2,
+        limit,
+        sortBy,
+        order: "asc",
+      }).catch(() => null)
+    )
+  );
+
+  const seen = new Set();
+  const images = [first, ...remainingPages]
+    .flatMap((pageResult) => pageResult?.images || [])
+    .filter((image) => {
+      const key = String(image.id || image.imageUrl || "");
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+  return {
+    images,
+    meta: {
+      ...first.meta,
+      currentPage: 1,
+      itemsPerPage: images.length,
+      totalItems: images.length,
+      totalPages: 1,
+    },
   };
 }
 
@@ -466,6 +517,51 @@ export async function updateGalleryImageIsNew(id, is_new, token) {
 }
 
 // ── Blog Gallery Images ───────────────────────────────────
+
+export async function updateGalleryImageSortOrder(id, { title, categories }, token) {
+  const imageId = Number(id);
+  if (!Number.isInteger(imageId) || imageId <= 0) {
+    throw new Error("Invalid image ID");
+  }
+
+  const cleanCategories = (categories || [])
+    .map((category) => ({
+      categoryId: Number(category.categoryId),
+      sortOrder: Number(category.sortOrder),
+    }))
+    .filter(
+      (category) =>
+        Number.isInteger(category.categoryId) &&
+        category.categoryId > 0 &&
+        Number.isInteger(category.sortOrder) &&
+        category.sortOrder > 0
+    );
+
+  if (!cleanCategories.length) {
+    throw new Error("Select a category and enter a valid order number.");
+  }
+
+  const payload = { id: imageId, imageId, title, categories: cleanCategories };
+  const requestOptions = {
+    method: "PUT",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      ...authHeaders(token),
+    },
+    body: JSON.stringify(payload),
+  };
+
+  const response = await fetch(`${API_BASE}/api/images/${imageId}/sort-order`, requestOptions);
+  const responseText = await response.clone().text().catch(() => "");
+
+  if (response.status === 404 || responseText.includes("Cannot PUT")) {
+    const fallbackResponse = await fetch(`${API_BASE}/api/images/sort-order`, requestOptions);
+    return parseResponse(fallbackResponse);
+  }
+
+  return parseResponse(response);
+}
 
 export async function addBlogImages(blogId, files, token) {
   const formData = new FormData();

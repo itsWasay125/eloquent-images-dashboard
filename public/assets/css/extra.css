@@ -2650,7 +2650,7 @@ body,
 
 .eloquent-gallery-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
   padding: 22px;
 }
@@ -3503,6 +3503,361 @@ body,
   background: rgba(139, 53, 60, 0.32);
 }
 
+/* Gallery page overrides and list view. */
+.eloquent-gallery-card-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+}
+
+.eloquent-gallery-media {
+  background: #111111;
+}
+
+.eloquent-gallery-img {
+  object-fit: cover;
+  object-position: top center;
+  background: #111111;
+}
+
+.eloquent-gallery-card:hover .eloquent-gallery-img {
+  transform: none;
+}
+
+.eloquent-gallery-view-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 22px 18px;
+  margin-top: 20px;
+}
+
+.eloquent-gallery-view-row strong,
+.eloquent-gallery-view-row span {
+  display: block;
+}
+
+.eloquent-gallery-view-row strong {
+  color: #edf3f7;
+  font-size: 14px;
+}
+
+.eloquent-gallery-view-row span {
+  margin-top: 3px;
+  color: #718493;
+  font-size: 12px;
+}
+
+.eloquent-gallery-view-toggle {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.eloquent-gallery-view-toggle button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 36px;
+  padding: 0 13px;
+  color: #9fb0bd;
+  font-size: 13px;
+  font-weight: 700;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.eloquent-gallery-view-toggle button.active,
+.eloquent-gallery-view-toggle button:hover {
+  color: #ffffff;
+  border-color: rgba(133, 178, 210, 0.45);
+  background: rgba(75, 116, 148, 0.28);
+}
+
+.eloquent-whats-new-toggle {
+  display: inline-flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex: initial;
+  width: 100%;
+  height: auto;
+  min-height: 38px;
+  margin-top: 0;
+  padding: 9px 12px;
+  color: #94a3b8;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: color 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+}
+
+.eloquent-whats-new-toggle svg {
+  flex: 0 0 auto;
+}
+
+.eloquent-whats-new-toggle span {
+  display: block;
+  min-width: 0;
+  white-space: normal;
+}
+
+.eloquent-whats-new-toggle:hover {
+  color: #dbeafe;
+  background: rgba(59, 130, 246, 0.12);
+  border-color: rgba(59, 130, 246, 0.45);
+}
+
+.eloquent-whats-new-toggle.is-active {
+  color: #60a5fa;
+  background: rgba(59, 130, 246, 0.12);
+  border-color: #3b82f6;
+}
+
+.eloquent-gallery-list-wrap {
+  margin: 0 22px 22px;
+  overflow-x: auto;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 12px;
+  background: #151515;
+}
+
+.eloquent-gallery-list {
+  width: 100%;
+  min-width: 860px;
+  border-collapse: collapse;
+}
+
+.eloquent-gallery-list th,
+.eloquent-gallery-list td {
+  padding: 10px 14px;
+  color: #d7e0e7;
+  font-size: 13px;
+  vertical-align: middle;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.eloquent-gallery-list th {
+  color: #8fa2b1;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.eloquent-gallery-list tbody tr:hover {
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.eloquent-gallery-list tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.eloquent-gallery-list-thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 76px;
+  height: 56px;
+  overflow: hidden;
+  background: #0f0f0f;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 7px;
+}
+
+.eloquent-gallery-list-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+}
+
+.eloquent-whats-new-toggle-table {
+  width: 112px;
+  min-height: 34px;
+  padding: 7px 10px;
+  margin: 0;
+}
+
+.eloquent-gallery-list-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.eloquent-gallery-list-actions button,
+.eloquent-gallery-list .eloquent-gallery-title-save,
+.eloquent-gallery-list .eloquent-gallery-title-cancel {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  color: #a6b5c1;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.eloquent-sort-order-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.eloquent-sort-order-control input {
+  width: 72px;
+  height: 34px;
+  padding: 0 8px;
+  color: #e8f0f6;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.eloquent-sort-order-control input:disabled {
+  opacity: 0.5;
+}
+
+.eloquent-sort-order-control button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  color: #a6b5c1;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.eloquent-sort-order-control button:hover:not(:disabled) {
+  color: #dbeafe;
+  border-color: rgba(59, 130, 246, 0.45);
+  background: rgba(59, 130, 246, 0.12);
+}
+
+.eloquent-sort-order-control button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.eloquent-gallery-list-wrap {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(96, 165, 250, 0.55) rgba(255, 255, 255, 0.06);
+}
+
+.eloquent-gallery-list-wrap::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.eloquent-gallery-list-wrap::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 999px;
+}
+
+.eloquent-gallery-list-wrap::-webkit-scrollbar-thumb {
+  background: linear-gradient(135deg, rgba(96, 165, 250, 0.72), rgba(20, 35, 51, 0.95));
+  border: 2px solid #151515;
+  border-radius: 999px;
+}
+
+.eloquent-sort-order-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 138px;
+  padding: 5px;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 999px;
+}
+
+.eloquent-sort-order-control > span {
+  padding-left: 9px;
+  color: #8fa2b1;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.eloquent-sort-order-control input {
+  width: 46px;
+  height: 30px;
+  padding: 0 6px;
+  color: #f8fbff;
+  font-size: 14px;
+  font-weight: 800;
+  text-align: center;
+  background: #101820;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 999px;
+  outline: none;
+}
+
+.eloquent-sort-order-control input:focus {
+  border-color: rgba(96, 165, 250, 0.8);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+}
+
+.eloquent-sort-order-control input::-webkit-outer-spin-button,
+.eloquent-sort-order-control input::-webkit-inner-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
+}
+
+.eloquent-sort-order-control input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+.eloquent-sort-order-control button {
+  width: 30px;
+  height: 30px;
+  color: #d8e8f7;
+  background: rgba(59, 130, 246, 0.16);
+  border: 1px solid rgba(96, 165, 250, 0.32);
+  border-radius: 999px;
+}
+
+.eloquent-sort-order-control button:hover:not(:disabled) {
+  color: #ffffff;
+  background: #2563eb;
+  border-color: #60a5fa;
+}
+
+.eloquent-sort-order-control-card {
+  grid-column: 1 / -1;
+  justify-content: space-between;
+  width: 100%;
+  min-width: 0;
+  margin-top: -2px;
+  border-radius: 8px;
+}
+
+.eloquent-sort-order-control-card input {
+  flex: 0 0 58px;
+}
+
+
+
+
 /* Gallery category edit */
 .eloquent-gallery-category-edit {
   padding: 13px;
@@ -3553,6 +3908,18 @@ body,
 
   .eloquent-blog-edit-header .eloquent-btn {
     width: 100%;
+  }
+}
+
+@media (max-width: 767px) {
+  .eloquent-gallery-view-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .eloquent-gallery-view-toggle {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
   }
 }
 

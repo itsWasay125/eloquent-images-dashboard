@@ -8,7 +8,7 @@ import {
   uploadImages,
 } from "../api/eloquentApi";
 import MasterLayout from "../otherImages/MasterLayout";
-import { addGalleryWatermark } from "../utils/watermarkImage";
+import { addGalleryWatermark, GALLERY_WATERMARK_ENABLED } from "../utils/watermarkImage";
 
 const emptyUpload = {
   categoryIds: [],
@@ -105,14 +105,16 @@ const EloquentGalleryCreatePage = () => {
     setUploadProgress({ done: 0, total });
     setSubmitting(true);
     try {
-      setUploadStep("Applying watermarks...");
-      const watermarkedFiles = await mapWithConcurrency(upload.files, 3, addGalleryWatermark);
+      setUploadStep(GALLERY_WATERMARK_ENABLED ? "Applying watermarks..." : "Preparing images...");
+      const uploadFiles = GALLERY_WATERMARK_ENABLED
+        ? await mapWithConcurrency(upload.files, 3, addGalleryWatermark)
+        : upload.files;
       setUploadProgress({ done: 0, total });
       setUploadStep("Uploading...");
       await uploadImages(
         {
           categoryIds: upload.categoryIds,
-          files: watermarkedFiles,
+          files: uploadFiles,
           onProgress: (done, totalCount) => setUploadProgress({ done, total: totalCount }),
         },
         token

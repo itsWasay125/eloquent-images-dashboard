@@ -1,3 +1,5 @@
+export const GALLERY_WATERMARK_ENABLED = true
+
 const WATERMARK_TEXT = "Eloquent Images by Adrian";
 const WATERMARK_FONT_FAMILY = '"Vivaldi Std", Vivaldi, "Edwardian Script ITC", cursive';
 
@@ -38,7 +40,7 @@ function getOutputType(file) {
 }
 
 export async function addGalleryWatermark(file) {
-  if (!file?.type?.startsWith("image/")) return file;
+  if (!GALLERY_WATERMARK_ENABLED || !file?.type?.startsWith("image/")) return file;
 
   const image = await loadImage(file);
   const canvas = document.createElement("canvas");

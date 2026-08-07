@@ -441,6 +441,7 @@ const EloquentGalleryPage = () => {
       const reorderedImagesWithOrder = reorderedImages.map((item, index) =>
         withCategorySortOrder(item, activeCategory, index + 1)
       );
+      const lastIndexToRefresh = Math.max(currentIndex, targetIndex);
 
       setImages(reorderedImagesWithOrder);
       setSortOrderDrafts((current) => {
@@ -452,7 +453,7 @@ const EloquentGalleryPage = () => {
       });
 
       const savedImageById = new Map();
-      for (let index = reorderedImagesWithOrder.length - 1; index >= 0; index -= 1) {
+      for (let index = lastIndexToRefresh; index >= 0; index -= 1) {
         const item = reorderedImagesWithOrder[index];
         const result = await updateGalleryImageSortOrder(
           item.id,

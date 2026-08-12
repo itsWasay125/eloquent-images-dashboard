@@ -1,14 +1,20 @@
 import React, { useEffect, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
-import { getAuthSession } from "../api/eloquentApi";
+import { clearAuthSession, getAuthSession, isAdminSession } from "../api/eloquentApi";
+
+function hasAdminAccess() {
+  const session = getAuthSession();
+  return Boolean(session?.token && isAdminSession(session));
+}
 
 const ProtectedRoute = ({ element: Component }) => {
   const navigate = useNavigate();
-  const [authed, setAuthed] = useState(() => Boolean(getAuthSession()?.token));
+  const [authed, setAuthed] = useState(hasAdminAccess);
 
   useEffect(() => {
     const check = () => {
-      if (!getAuthSession()?.token) {
+      if (!hasAdminAccess()) {
+        clearAuthSession();
         setAuthed(false);
         navigate("/", { replace: true });
       }

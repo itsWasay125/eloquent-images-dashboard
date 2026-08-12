@@ -9,9 +9,11 @@ import {
   fetchGalleryImages,
   fetchWhatsNewGalleryImages,
   getAuthSession,
+  syncCategoryAlphabeticalSortOrder,
   updateGalleryImageCategories,
   updateGalleryImageTitle,
   updateGalleryImageIsNew,
+  updateGalleryImageNewTitle,
   updateGalleryImageSortOrder,
 } from "../api/eloquentApi";
 import EloquentImage from "../components/EloquentImage";
@@ -38,9 +40,37 @@ function getImageCategory(image, categoryId) {
   return (image.categories || []).find((cat) => String(cat.id || cat.categoryId) === String(categoryId));
 }
 
+function getCategoryId(category) {
+  const id = Number(category?.id ?? category?.categoryId);
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+function getImageCategoryIds(image) {
+  return [
+    ...new Set(
+      (image?.categories || [])
+        .map(getCategoryId)
+        .filter(Boolean)
+        .map(String)
+    ),
+  ];
+}
+
 function getCategoryById(categories, categoryId) {
   if (!categoryId) return null;
   return categories.find((category) => String(category.id) === String(categoryId)) || null;
+}
+
+function isBirdsCategory(category = null) {
+  const value = String(category?.slug || category?.name || category?.label || "").toLowerCase();
+  return value === "birds";
+}
+
+function getBirdCategoryIds(categories = [], categoryIds = []) {
+  const selectedIds = new Set(categoryIds.map(String));
+  return categories
+    .filter((category) => isBirdsCategory(category) && selectedIds.has(String(category.id)))
+    .map((category) => String(category.id));
 }
 
 function toFiniteNumber(value) {
@@ -77,10 +107,34 @@ function isMarkedNew(image) {
   );
 }
 
-function applyWhatsNewState(images, whatsNewIds) {
+function getWhatsNewFact(image = {}) {
+  return (
+    image.whatsNewFact ||
+    image.whats_new_fact ||
+    image.interestingFact ||
+    image.interesting_fact ||
+    image.titles ||
+    image.newTitleUpdate ||
+    image.newTitleUpdatw ||
+    image.new_title_update ||
+    image.newTitle ||
+    image.new_title ||
+    image.isNewTitle ||
+    image.is_new_title ||
+    ""
+  ).trim();
+}
+
+function applyWhatsNewState(images, whatsNewIds, whatsNewById = new Map()) {
   return images.map((image) => {
-    const isNew = whatsNewIds.has(String(image.id)) || isMarkedNew(image);
-    return { ...image, isNew, is_new: isNew };
+    const whatsNewImage = whatsNewById.get(String(image.id));
+    const isNew = Boolean(whatsNewImage) || whatsNewIds.has(String(image.id)) || isMarkedNew(image);
+    return {
+      ...image,
+      isNew,
+      is_new: isNew,
+      whatsNewFact: whatsNewImage ? getWhatsNewFact(whatsNewImage) : getWhatsNewFact(image),
+    };
   });
 }
 
@@ -94,6 +148,10 @@ function sortByImageName(images = []) {
 }
 
 function sortGalleryImages(images = [], categoryId = "", category = null) {
+  if (isBirdsCategory(category)) {
+    return sortByImageName(images);
+  }
+
   const hasCategorySortOrder =
     categoryId &&
     images.some((image) => {
@@ -142,6 +200,35 @@ function withCategorySortOrder(image, categoryId, sortOrder) {
   return { ...image, categories };
 }
 
+function getSortOrderPayloadCategories(image, categoryId, sortOrder) {
+  const activeCategoryId = Number(categoryId);
+  const seenCategoryIds = new Set();
+  const payloadCategories = (image.categories || [])
+    .map((category) => {
+      const categoryIdValue = getCategoryId(category);
+      if (!categoryIdValue || seenCategoryIds.has(categoryIdValue)) return null;
+
+      seenCategoryIds.add(categoryIdValue);
+      const existingSortOrder = Number(category.sortOrder);
+      const preservedSortOrder =
+        Number.isInteger(existingSortOrder) && existingSortOrder > 0
+          ? existingSortOrder
+          : sortOrder;
+
+      return {
+        categoryId: categoryIdValue,
+        sortOrder: categoryIdValue === activeCategoryId ? sortOrder : preservedSortOrder,
+      };
+    })
+    .filter(Boolean);
+
+  if (Number.isInteger(activeCategoryId) && activeCategoryId > 0 && !seenCategoryIds.has(activeCategoryId)) {
+    payloadCategories.push({ categoryId: activeCategoryId, sortOrder });
+  }
+
+  return payloadCategories;
+}
+
 function mergeImageSortOrderFromResponse(image, responseImage, categoryId) {
   const responseCategory = (responseImage?.categories || []).find(
     (category) => String(category.id ?? category.categoryId) === String(categoryId)
@@ -149,7 +236,7 @@ function mergeImageSortOrderFromResponse(image, responseImage, categoryId) {
   const responseSortOrder = Number(responseCategory?.sortOrder);
 
   return Number.isInteger(responseSortOrder) && responseSortOrder > 0
-    ? withCategorySortOrder({ ...image, ...responseImage }, categoryId, responseSortOrder)
+    ? withCategorySortOrder({ ...responseImage, categories: image.categories }, categoryId, responseSortOrder)
     : image;
 }
 
@@ -173,6 +260,9 @@ const EloquentGalleryPage = () => {
   const [viewMode, setViewMode] = useState("grid");
   const [sortOrderDrafts, setSortOrderDrafts] = useState({});
   const [savingSortOrderId, setSavingSortOrderId] = useState(null);
+  const [whatsNewFactDrafts, setWhatsNewFactDrafts] = useState({});
+  const [savingWhatsNewFactId, setSavingWhatsNewFactId] = useState(null);
+  const [expandedFactIds, setExpandedFactIds] = useState(() => new Set());
 
   const token = getAuthSession()?.token;
 
@@ -186,32 +276,56 @@ const EloquentGalleryPage = () => {
     try {
       const isListView = viewMode === "list";
       const selectedCategory = getCategoryById(categories, categoryId);
+      const shouldClientPageBirds = !isListView && isBirdsCategory(selectedCategory);
       const [data, whatsNewImages] = await Promise.all([
-        isListView
-          ? fetchAllGalleryImages({ categoryId, limit: GALLERY_LIST_PAGE_SIZE })
+        isListView || shouldClientPageBirds
+          ? fetchAllGalleryImages({ categoryId, limit: GALLERY_LIST_PAGE_SIZE, sortBy: "title" })
           : fetchGalleryImages({ categoryId, page: pageNumber, limit: GALLERY_PAGE_SIZE }),
         fetchWhatsNewGalleryImages(),
       ]);
       const nextWhatsNewIds = new Set(whatsNewImages.map((image) => String(image.id)));
+      const nextWhatsNewById = new Map(whatsNewImages.map((image) => [String(image.id), image]));
       setWhatsNewIds(nextWhatsNewIds);
 
-      const pageImages = options.deletedImageId
+      const allPageImages = options.deletedImageId
         ? data.images.filter((image) => String(image.id) !== String(options.deletedImageId))
         : data.images;
+      const pageImages = shouldClientPageBirds
+        ? sortGalleryImages(allPageImages, categoryId, selectedCategory).slice(
+            (Math.max(1, Number(pageNumber) || 1) - 1) * GALLERY_PAGE_SIZE,
+            Math.max(1, Number(pageNumber) || 1) * GALLERY_PAGE_SIZE
+          )
+        : allPageImages;
       const nextImages = applyWhatsNewState(
         sortGalleryImages(pageImages, categoryId, selectedCategory),
-        nextWhatsNewIds
+        nextWhatsNewIds,
+        nextWhatsNewById
       );
-      const nextMeta =
-        options.maxTotalItems === undefined
+      const nextMeta = shouldClientPageBirds
+        ? {
+              ...data.meta,
+              currentPage: pageNumber,
+              itemsPerPage: GALLERY_PAGE_SIZE,
+              totalItems: allPageImages.length,
+              totalPages: Math.max(1, Math.ceil(allPageImages.length / GALLERY_PAGE_SIZE)),
+            }
+        : options.maxTotalItems === undefined
           ? data.meta
           : limitMetaTotal(data.meta, options.maxTotalItems);
       setImages(nextImages);
       setSortOrderDrafts((current) => {
         const next = { ...current };
+        const orderOffset = isListView ? 0 : (Math.max(1, Number(pageNumber) || 1) - 1) * GALLERY_PAGE_SIZE;
         nextImages.forEach((image, index) => {
           const categoryOrder = getImageCategory(image, categoryId)?.sortOrder;
-          next[image.id] = String(categoryOrder || index + 1);
+          next[image.id] = String(categoryOrder || orderOffset + index + 1);
+        });
+        return next;
+      });
+      setWhatsNewFactDrafts((current) => {
+        const next = { ...current };
+        nextImages.forEach((image) => {
+          next[image.id] = current[image.id] ?? getWhatsNewFact(image);
         });
         return next;
       });
@@ -296,6 +410,7 @@ const EloquentGalleryPage = () => {
     if (!trimmed) return;
     setSavingTitleId(imageId);
     try {
+      const currentImage = images.find((img) => String(img.id) === String(imageId));
       const result = await updateGalleryImageTitle(imageId, trimmed, token);
       const updatedImage = result.data || {};
       setImages((prev) =>
@@ -304,6 +419,13 @@ const EloquentGalleryPage = () => {
         )
       );
       setEditingTitleId(null);
+      const categoryIdsToSync = activeCategory
+        ? getBirdCategoryIds(categories, [activeCategory])
+        : getBirdCategoryIds(categories, getImageCategoryIds({ ...currentImage, ...updatedImage }));
+      for (const categoryId of categoryIdsToSync) {
+        await syncCategoryAlphabeticalSortOrder(categoryId, token);
+      }
+      if (categoryIdsToSync.length) await loadImages(activeCategory, page);
     } catch (err) {
       await Swal.fire({
         ...swalOptions,
@@ -346,6 +468,9 @@ const EloquentGalleryPage = () => {
     try {
       await updateGalleryImageCategories(imageId, editingCategoryIds, token);
       setEditingCategoriesId(null);
+      for (const categoryId of getBirdCategoryIds(categories, editingCategoryIds)) {
+        await syncCategoryAlphabeticalSortOrder(categoryId, token);
+      }
       await loadImages(activeCategory, page);
     } catch (err) {
       await Swal.fire({
@@ -371,7 +496,11 @@ const EloquentGalleryPage = () => {
         return next;
       });
       setImages((prev) =>
-        prev.map((img) => (img.id === image.id ? { ...img, isNew: newStatus, is_new: newStatus } : img))
+        prev.map((img) =>
+          img.id === image.id
+            ? { ...img, isNew: newStatus, is_new: newStatus }
+            : img
+        )
       );
       await updateGalleryImageIsNew(image.id, newStatus, token);
     } catch (err) {
@@ -394,6 +523,69 @@ const EloquentGalleryPage = () => {
     }
   };
 
+  const handleWhatsNewFactChange = (imageId, value) => {
+    setWhatsNewFactDrafts((current) => ({ ...current, [imageId]: value }));
+  };
+
+  const toggleWhatsNewFactPanel = (imageId) => {
+    setExpandedFactIds((current) => {
+      const next = new Set(current);
+      if (next.has(imageId)) next.delete(imageId);
+      else next.add(imageId);
+      return next;
+    });
+  };
+
+  const handleSaveWhatsNewFact = async (image) => {
+    const fact = (whatsNewFactDrafts[image.id] || "").trim();
+    if (!fact) {
+      await Swal.fire({
+        ...swalOptions,
+        icon: "info",
+        title: "Fact is required",
+        text: "Please add a fact before saving.",
+      });
+      return;
+    }
+
+    setSavingWhatsNewFactId(image.id);
+    try {
+      const result = await updateGalleryImageNewTitle(image.id, fact, token);
+      const updatedImage = result.data || {};
+      setWhatsNewIds((current) => {
+        const next = new Set(current);
+        next.add(String(image.id));
+        return next;
+      });
+      setImages((prev) =>
+        prev.map((img) =>
+          img.id === image.id
+            ? { ...img, ...updatedImage, title: img.title, isNew: true, is_new: true, whatsNewFact: fact }
+            : img
+        )
+      );
+      await Swal.fire({
+        ...swalOptions,
+        icon: "success",
+        title: "Fact saved",
+        text: "The What's New fact has been updated.",
+      });
+    } catch (err) {
+      await Swal.fire({
+        ...swalOptions,
+        icon: "error",
+        title: "Could not save fact",
+        text: err.message || "Please try again.",
+      });
+    } finally {
+      setSavingWhatsNewFactId(null);
+    }
+  };
+
+  const handleClearWhatsNewFact = (image) => {
+    setWhatsNewFactDrafts((current) => ({ ...current, [image.id]: "" }));
+  };
+
   const handleSortOrderChange = (imageId, value) => {
     setSortOrderDrafts((current) => ({ ...current, [imageId]: value }));
   };
@@ -405,6 +597,16 @@ const EloquentGalleryPage = () => {
         icon: "info",
         title: "Select a category",
         text: "Choose a specific category before saving image order.",
+      });
+      return;
+    }
+
+    if (isBirdsCategory(getCategoryById(categories, activeCategory))) {
+      await Swal.fire({
+        ...swalOptions,
+        icon: "info",
+        title: "Birds are alphabetical",
+        text: "The Birds category is kept in alphabetical order by image title.",
       });
       return;
     }
@@ -422,10 +624,15 @@ const EloquentGalleryPage = () => {
 
     setSavingSortOrderId(image.id);
     try {
+      const selectedCategory = getCategoryById(categories, activeCategory);
+      const fullImageResult =
+        viewMode === "list"
+          ? { images }
+          : await fetchAllGalleryImages({ categoryId: activeCategory, limit: GALLERY_LIST_PAGE_SIZE });
       const currentImages = sortGalleryImages(
-        images,
+        fullImageResult.images,
         activeCategory,
-        getCategoryById(categories, activeCategory)
+        selectedCategory
       );
       const currentIndex = currentImages.findIndex((item) => String(item.id) === String(image.id));
 
@@ -442,14 +649,27 @@ const EloquentGalleryPage = () => {
         withCategorySortOrder(item, activeCategory, index + 1)
       );
       const lastIndexToRefresh = Math.max(currentIndex, targetIndex);
+      const pageStartIndex = viewMode === "list" ? 0 : (Math.max(1, Number(page) || 1) - 1) * GALLERY_PAGE_SIZE;
+      const getVisibleImages = (orderedImages) =>
+        viewMode === "list"
+          ? orderedImages
+          : orderedImages.slice(pageStartIndex, pageStartIndex + GALLERY_PAGE_SIZE);
 
-      setImages(reorderedImagesWithOrder);
+      setImages(applyWhatsNewState(getVisibleImages(reorderedImagesWithOrder), whatsNewIds));
       setSortOrderDrafts((current) => {
         const next = { ...current };
         reorderedImagesWithOrder.forEach((item, index) => {
           next[item.id] = String(index + 1);
         });
         return next;
+      });
+
+      setSavingSortOrderId(null);
+      void Swal.fire({
+        ...swalOptions,
+        icon: "success",
+        title: "Order saved",
+        text: "The image order has been updated.",
       });
 
       const savedImageById = new Map();
@@ -459,7 +679,7 @@ const EloquentGalleryPage = () => {
           item.id,
           {
             title: getImageName(item),
-            categories: [{ categoryId: activeCategory, sortOrder: index + 1 }],
+            categories: getSortOrderPayloadCategories(item, activeCategory, index + 1),
           },
           token
         );
@@ -476,27 +696,7 @@ const EloquentGalleryPage = () => {
           : itemWithRequestedOrder;
       });
 
-      setImages((current) => {
-        const orderById = new Map(
-          savedReorderedImages.map((item, index) => [String(item.id), index + 1])
-        );
-        const updatedImages = current.map((item) => {
-          const nextOrder = orderById.get(String(item.id));
-          return nextOrder ? withCategorySortOrder(item, activeCategory, nextOrder) : item;
-        });
-
-        return sortGalleryImages(
-          updatedImages,
-          activeCategory,
-          getCategoryById(categories, activeCategory)
-        );
-      });
-      await Swal.fire({
-        ...swalOptions,
-        icon: "success",
-        title: "Order saved",
-        text: "The image order has been updated.",
-      });
+      setImages(applyWhatsNewState(getVisibleImages(savedReorderedImages), whatsNewIds));
     } catch (err) {
       await Swal.fire({
         ...swalOptions,
@@ -509,31 +709,117 @@ const EloquentGalleryPage = () => {
     }
   };
 
-  const renderSortOrderControl = (image, className = "") => (
-    <div className={`eloquent-sort-order-control ${className}`.trim()}>
-      <span>Order</span>
-      <input
-        aria-label={`Sort order for ${getImageName(image)}`}
-        disabled={!activeCategory || savingSortOrderId === image.id}
-        min="1"
-        onChange={(event) => handleSortOrderChange(image.id, event.target.value)}
-        type="number"
-        value={sortOrderDrafts[image.id] || ""}
-      />
-      <button
-        disabled={!activeCategory || savingSortOrderId === image.id}
-        onClick={() => handleSaveSortOrder(image)}
-        title={activeCategory ? "Save order" : "Select a category first"}
-        type="button"
-      >
-        <Icon
-          className={savingSortOrderId === image.id ? "eloquent-contact-spinner" : ""}
-          icon={savingSortOrderId === image.id ? "solar:refresh-linear" : "solar:diskette-linear"}
-          width="15"
+  const renderSortOrderControl = (image, className = "") => {
+    const birdsCategoryActive = isBirdsCategory(getCategoryById(categories, activeCategory));
+    const disabled = !activeCategory || birdsCategoryActive || savingSortOrderId === image.id;
+
+    return (
+      <div className={`eloquent-sort-order-control ${className}`.trim()}>
+        <span>{birdsCategoryActive ? "Alphabetical" : "Order"}</span>
+        <input
+          aria-label={`Sort order for ${getImageName(image)}`}
+          disabled={disabled}
+          min="1"
+          onChange={(event) => handleSortOrderChange(image.id, event.target.value)}
+          type="number"
+          value={sortOrderDrafts[image.id] || ""}
         />
-      </button>
-    </div>
-  );
+        <button
+          disabled={disabled}
+          onClick={() => handleSaveSortOrder(image)}
+          title={
+            birdsCategoryActive
+              ? "Birds are sorted alphabetically"
+              : activeCategory
+                ? "Save order"
+                : "Select a category first"
+          }
+          type="button"
+        >
+          <Icon
+            className={savingSortOrderId === image.id ? "eloquent-contact-spinner" : ""}
+            icon={savingSortOrderId === image.id ? "solar:refresh-linear" : "solar:diskette-linear"}
+            width="15"
+          />
+        </button>
+      </div>
+    );
+  };
+
+  const renderWhatsNewControl = (image, isNew, className = "") => {
+    const factValue = whatsNewFactDrafts[image.id] ?? getWhatsNewFact(image);
+    const isSavingFact = savingWhatsNewFactId === image.id;
+    const isFactPanelOpen = expandedFactIds.has(image.id);
+
+    return (
+      <div className={`eloquent-whats-new-wrap ${className}`.trim()}>
+        <button
+          className={`eloquent-whats-new-toggle${isNew ? " is-active" : ""}`}
+          type="button"
+          onClick={() => handleToggleIsNew(image)}
+        >
+          <Icon
+            icon={isNew ? "solar:check-circle-bold" : "solar:check-circle-linear"}
+            width="16"
+          />
+          <span>{isNew ? "Added to What's New" : "Show in What's New"}</span>
+        </button>
+
+        {isNew && (
+          <button
+            className="eloquent-whats-new-fact-toggle"
+            type="button"
+            onClick={() => toggleWhatsNewFactPanel(image.id)}
+          >
+            <Icon icon={isFactPanelOpen ? "solar:alt-arrow-up-linear" : "solar:notes-linear"} width="15" />
+            <span>{isFactPanelOpen ? "Close Fact" : factValue.trim() ? "Edit Fact" : "Add Fact"}</span>
+          </button>
+        )}
+
+        {isNew && isFactPanelOpen && (
+          <div className="eloquent-whats-new-fact">
+            <label htmlFor={`whats-new-fact-${image.id}`}>Interesting fact</label>
+            <textarea
+              disabled={isSavingFact}
+              id={`whats-new-fact-${image.id}`}
+              onChange={(event) => handleWhatsNewFactChange(image.id, event.target.value)}
+              placeholder="Add any facts or interesting notes for What's New..."
+              rows="3"
+              value={factValue}
+            />
+            <div>
+              <button
+                disabled={isSavingFact}
+                onClick={() => handleSaveWhatsNewFact(image)}
+                type="button"
+              >
+                <Icon
+                  className={isSavingFact ? "eloquent-contact-spinner" : ""}
+                  icon={isSavingFact ? "solar:refresh-linear" : "solar:diskette-linear"}
+                  width="15"
+                />
+                Save Fact
+              </button>
+              <button
+                disabled={isSavingFact}
+                onClick={() => toggleWhatsNewFactPanel(image.id)}
+                type="button"
+              >
+                Close
+              </button>
+              <button
+                disabled={isSavingFact || !factValue.trim()}
+                onClick={() => handleClearWhatsNewFact(image)}
+                type="button"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <MasterLayout>
@@ -607,22 +893,22 @@ const EloquentGalleryPage = () => {
             </span>
           </div>
           <div className="eloquent-gallery-view-toggle">
-            <button
-              className={viewMode === "grid" ? "active" : ""}
-              onClick={() => selectViewMode("grid")}
-              type="button"
-            >
-              <Icon icon="solar:widget-4-linear" width="17" />
-              Grid
-            </button>
-            <button
-              className={viewMode === "list" ? "active" : ""}
-              onClick={() => selectViewMode("list")}
-              type="button"
-            >
-              <Icon icon="solar:list-linear" width="17" />
-              List / Show All
-            </button>
+              <button
+                className={viewMode === "grid" ? "active" : ""}
+                onClick={() => selectViewMode("grid")}
+                type="button"
+              >
+                <Icon icon="solar:widget-4-linear" width="17" />
+                Grid
+              </button>
+              <button
+                className={viewMode === "list" ? "active" : ""}
+                onClick={() => selectViewMode("list")}
+                type="button"
+              >
+                <Icon icon="solar:list-linear" width="17" />
+                List / Show All
+              </button>
           </div>
         </div>
 
@@ -712,19 +998,7 @@ const EloquentGalleryPage = () => {
                         </span>
                       </td>
                       <td>
-                        <button
-                          className={`eloquent-whats-new-toggle eloquent-whats-new-toggle-table${
-                            isNew ? " is-active" : ""
-                          }`}
-                          type="button"
-                          onClick={() => handleToggleIsNew(image)}
-                        >
-                          <Icon
-                            icon={isNew ? "solar:check-circle-bold" : "solar:check-circle-linear"}
-                            width="16"
-                          />
-                          <span>{isNew ? "Added" : "Show"}</span>
-                        </button>
+                        {renderWhatsNewControl(image, isNew, "eloquent-whats-new-wrap-table")}
                       </td>
                       <td>
                         <div className="eloquent-gallery-list-actions">
@@ -914,17 +1188,7 @@ const EloquentGalleryPage = () => {
                       </button>
                     </div>
                   )}
-                  <button
-                    className={`eloquent-whats-new-toggle${isNew ? " is-active" : ""}`}
-                    type="button"
-                    onClick={() => handleToggleIsNew(image)}
-                  >
-                    <Icon
-                      icon={isNew ? "solar:check-circle-bold" : "solar:check-circle-linear"}
-                      width="16"
-                    />
-                    <span>{isNew ? "Added to What's New" : "Show in What's New"}</span>
-                  </button>
+                  {renderWhatsNewControl(image, isNew)}
                   {renderSortOrderControl(image, "eloquent-sort-order-control-card")}
                 </div>
                 )}

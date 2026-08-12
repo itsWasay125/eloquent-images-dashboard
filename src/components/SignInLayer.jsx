@@ -2,7 +2,13 @@ import React, { useEffect, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { Formik, Form, Field } from "formik";
 import { Icon } from "@iconify/react/dist/iconify.js";
-import { consumeSessionExpiredFlag, getAuthSession, loginUser } from "../api/eloquentApi";
+import {
+  clearAuthSession,
+  consumeSessionExpiredFlag,
+  getAuthSession,
+  isAdminSession,
+  loginUser,
+} from "../api/eloquentApi";
 
 const signInVisual = "/assets/images/auth/eloquent-sign-in-visual.png";
 const DEFAULT_DASHBOARD_PATH = "/gallery";
@@ -19,8 +25,12 @@ const SignInLayer = () => {
     }
   }, []);
 
-  if (getAuthSession()?.token) {
+  const currentSession = getAuthSession();
+  if (currentSession?.token && isAdminSession(currentSession)) {
     return <Navigate replace to={DEFAULT_DASHBOARD_PATH} />;
+  }
+  if (currentSession?.token) {
+    clearAuthSession();
   }
 
   const handleLogin = async (values, helpers) => {

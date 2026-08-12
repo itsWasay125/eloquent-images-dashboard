@@ -67,9 +67,78 @@ function getImageDisplayName(image = {}) {
   ).replace(/\.[^/.]+$/, "");
 }
 
+function getImageSortTitle(image = {}) {
+  return (
+    image.title ||
+    image.originalName ||
+    image.fileName ||
+    image.filename ||
+    ""
+  )
+    .replace(/\.[^/.]+$/, "")
+    .trim();
+}
+
 function getIdValue(value) {
   const id = Number(value);
   return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+function getCategoryPayloadId(category) {
+  return getIdValue(category?.id ?? category?.categoryId);
+}
+
+function buildSortOrderCategories(image, activeCategoryId, sortOrder) {
+  const categoryId = getIdValue(activeCategoryId);
+  const seen = new Set();
+  const categories = (image.categories || [])
+    .map((category) => {
+      const existingCategoryId = getCategoryPayloadId(category);
+      if (!existingCategoryId || seen.has(existingCategoryId)) return null;
+
+      seen.add(existingCategoryId);
+      const existingSortOrder = Number(category.sortOrder);
+      return {
+        categoryId: existingCategoryId,
+        sortOrder:
+          existingCategoryId === categoryId
+            ? sortOrder
+            : Number.isInteger(existingSortOrder) && existingSortOrder > 0
+              ? existingSortOrder
+              : sortOrder,
+      };
+    })
+    .filter(Boolean);
+
+  if (categoryId && !seen.has(categoryId)) {
+    categories.push({ categoryId, sortOrder });
+  }
+
+  return categories;
+}
+
+function sortImagesByTitle(images = []) {
+  return [...images].sort((first, second) =>
+    getImageSortTitle(first).localeCompare(getImageSortTitle(second), undefined, {
+      numeric: true,
+      sensitivity: "base",
+    })
+  );
+}
+
+async function runWithConcurrency(items, limit, worker) {
+  let nextIndex = 0;
+
+  async function runWorker() {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      await worker(items[index], index);
+    }
+  }
+
+  const workerCount = Math.max(1, Math.min(limit, items.length));
+  await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
 }
 
 function collectUploadedImageIds(payload, fileTitle, ids = new Set()) {
@@ -169,16 +238,24 @@ export function getAuthToken() {
   );
 }
 
+export function isAdminSession(session = getAuthSession()) {
+  return String(session?.user?.role || session?.role || localStorage.getItem("role") || "")
+    .trim()
+    .toLowerCase() === "admin";
+}
+
 export function saveAuthSession(session) {
+  const role = String(session.user?.role || session.role || "").trim().toLowerCase();
   const normalizedSession = {
     ...session,
+    role,
     token: normalizeToken(session.token),
     expiresAt: Date.now() + SESSION_DURATION_MS,
   };
   localStorage.removeItem(EXPIRED_FLAG_KEY);
   localStorage.setItem(AUTH_KEY, JSON.stringify(normalizedSession));
   localStorage.setItem("token", normalizedSession.token);
-  localStorage.setItem("role", normalizedSession.user?.role?.toLowerCase() || "admin");
+  localStorage.setItem("role", role);
   localStorage.setItem("user", JSON.stringify(normalizedSession.user || {}));
 }
 
@@ -208,6 +285,11 @@ export async function loginUser(credentials) {
   }
 
   const session = { token, user: payload.user || data.user };
+  if (!isAdminSession(session)) {
+    clearAuthSession();
+    throw new Error("Admin access only.");
+  }
+
   saveAuthSession(session);
   return session;
 }
@@ -498,10 +580,17 @@ export async function updateGalleryImageCategories(id, categoryIds, token) {
   return updateGalleryImage(id, { categoryId }, token);
 }
 
-export async function updateGalleryImageIsNew(id, is_new, token) {
+export async function updateGalleryImageIsNew(id, is_new, token, options = {}) {
   const imageId = Number(id);
   if (!Number.isInteger(imageId) || imageId <= 0) {
     throw new Error("Invalid image ID");
+  }
+
+  const payload = { is_new };
+  if (Object.prototype.hasOwnProperty.call(options, "titles")) {
+    payload.titles = options.titles;
+  } else if (Object.prototype.hasOwnProperty.call(options, "title")) {
+    payload.titles = options.title;
   }
 
   const response = await fetch(`${API_BASE}/api/images/${imageId}/is-new`, {
@@ -511,12 +600,30 @@ export async function updateGalleryImageIsNew(id, is_new, token) {
       "Content-Type": "application/json",
       ...authHeaders(token),
     },
-    body: JSON.stringify({ is_new }),
+    body: JSON.stringify(payload),
   });
   return parseResponse(response);
 }
 
 // ── Blog Gallery Images ───────────────────────────────────
+
+export async function updateGalleryImageNewTitle(id, newTitle, token) {
+  const imageId = Number(id);
+  if (!Number.isInteger(imageId) || imageId <= 0) {
+    throw new Error("Invalid image ID");
+  }
+
+  const response = await fetch(`${API_BASE}/api/images/${imageId}/new-title`, {
+    method: "PATCH",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      ...authHeaders(token),
+    },
+    body: JSON.stringify({ new_title: newTitle }),
+  });
+  return parseResponse(response);
+}
 
 export async function updateGalleryImageSortOrder(id, { title, categories }, token) {
   const imageId = Number(id);
@@ -561,6 +668,31 @@ export async function updateGalleryImageSortOrder(id, { title, categories }, tok
   }
 
   return parseResponse(response);
+}
+
+export async function syncCategoryAlphabeticalSortOrder(categoryId, token, { concurrency = 4 } = {}) {
+  const activeCategoryId = getIdValue(categoryId);
+  if (!activeCategoryId) return 0;
+
+  const { images } = await fetchAllGalleryImages({
+    categoryId: activeCategoryId,
+    limit: 100,
+    sortBy: "title",
+  });
+  const sortedImages = sortImagesByTitle(images);
+
+  await runWithConcurrency(sortedImages, concurrency, (image, index) =>
+    updateGalleryImageSortOrder(
+      image.id,
+      {
+        title: getImageSortTitle(image),
+        categories: buildSortOrderCategories(image, activeCategoryId, index + 1),
+      },
+      token
+    )
+  );
+
+  return sortedImages.length;
 }
 
 export async function addBlogImages(blogId, files, token) {
